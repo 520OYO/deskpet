@@ -10,21 +10,58 @@ jobs:
         with:
           java-version: '11'
           distribution: temurin
-      - name: Install Android SDK manually
+      - name: Install Android SDK (try direct, fallback to sdkmanager)
         run: |
           SDK=$HOME/android-sdk
           mkdir -p $SDK/platforms $SDK/build-tools
-          curl -sSL -o /tmp/plat.zip https://dl.google.com/android/repository/platform-29_r05.zip
-          curl -sSL -o /tmp/bt.zip https://dl.google.com/android/repository/build-tools_r30.0.3-linux.zip
-          mkdir -p /tmp/plat /tmp/bt
-          unzip -q /tmp/plat.zip -d /tmp/plat
-          unzip -q /tmp/bt.zip -d /tmp/bt
-          P=$(ls -d /tmp/plat/*/ | head -1)
-          B=$(ls -d /tmp/bt/*/ | head -1)
-          rm -rf $SDK/platforms/android-29 $SDK/build-tools/30.0.3
-          mv "$P" $SDK/platforms/android-29
-          mv "$B" $SDK/build-tools/30.0.3
-          chmod +x $SDK/build-tools/30.0.3/* 2>/dev/null
+          ok=0
+          for U in \
+            "https://dl.google.com/android/repository/platform-29_r05.zip" \
+            "https://dl.google.com/android/repository/platform-29_r04.zip" ; do
+            echo "try platform: $U"
+            rm -f /tmp/p.zip; curl -sSL -o /tmp/p.zip "$U" || continue
+            rm -rf /tmp/pd; mkdir -p /tmp/pd
+            unzip -q /tmp/p.zip -d /tmp/pd 2>/dev/null || continue
+            PD=$(ls -d /tmp/pd/*/ | head -1)
+            if [ -f "$PD/android.jar" ]; then
+              rm -rf $SDK/platforms/android-29
+              mv "$PD" $SDK/platforms/android-29
+              echo "PLATFORM OK from $U"; ok=1; break
+            fi
+          done
+          for U in \
+            "https://dl.google.com/android/repository/build-tools_r30.0.3-linux.zip" \
+            "https://dl.google.com/android/repository/build-tools_r30.0.2-linux.zip" ; do
+            echo "try buildtools: $U"
+            rm -f /tmp/b.zip; curl -sSL -o /tmp/b.zip "$U" || continue
+            rm -rf /tmp/bd; mkdir -p /tmp/bd
+            unzip -q /tmp/b.zip -d /tmp/bd 2>/dev/null || continue
+            BD=$(ls -d /tmp/bd/*/ | head -1)
+            if [ -f "$BD/aapt2" ]; then
+              rm -rf $SDK/build-tools/30.0.3
+              mv "$BD" $SDK/build-tools/30.0.3
+              chmod +x $SDK/build-tools/30.0.3/* 2>/dev/null
+              echo "BUILDTOOLS OK from $U"; break
+            fi
+          done
+          if [ ! -f "$SDK/platforms/android-29/android.jar" ]; then
+            echo "fallback: sdkmanager"
+            curl -sSL -o /tmp/ct.zip https://dl.google.com/android/repository/commandlinetools-linux-6858069_latest.zip
+            mkdir -p $SDK/cmdline-tools
+            unzip -q /tmp/ct.zip -d $SDK/cmdline-tools
+            mv $SDK/cmdline-tools/cmdline-tools $SDK/cmdline-tools/latest 2>/dev/null
+            CM=$SDK/cmdline-tools/latest/bin/sdkmanager
+            chmod +x $CM
+            mkdir -p $SDK/licenses
+            printf '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n' > $SDK/licenses/android-sdk-license
+            printf '\n84831b9409646a918e30573bab4c9c91346d8abd\n' > $SDK/licenses/android-sdk-preview-license
+            yes | $CM --sdk_root=$SDK --licenses >/dev/null 2>&1
+            $CM --sdk_root=$SDK --install "platforms;android-29" "build-tools;30.0.3" 2>&1 | tail -20
+          fi
+          echo "=== VERIFY ==="
+          ls $SDK/platforms
+          ls $SDK/build-tools
+          test -f $SDK/platforms/android-29/android.jar && echo "ANDROID_JAR_OK" || echo "ANDROID_JAR_MISSING"
       - name: Unzip source
         run: |
           for z in *.zip; do [ -f "$z" ] && unzip -qo "$z"; done
@@ -34,18 +71,23 @@ jobs:
           ls -la "$D"
       - name: Build unsigned APK
         run: |
+          set +e
           D=${{ env.PICKED }}
           echo "sdk.dir=$HOME/android-sdk" > "$D/local.properties"
           curl -sSL -o g.zip https://services.gradle.org/distributions/gradle-6.7.1-bin.zip
           unzip -q g.zip -d /opt
           chmod +x /opt/gradle-6.7.1/bin/gradle
-          /opt/gradle-6.7.1/bin/gradle -p "$D" clean assembleRelease --stacktrace --no-daemon 2>&1 | tail -150
-      - name: Show APK results
+          /opt/gradle-6.7.1/bin/gradle -p "$D" clean assembleRelease --stacktrace --no-daemon > /tmp/build.log 2>&1
+          echo "GRADLE_EXIT=$?"
+      - name: THE REAL ERROR (screenshot this step)
+        if: always()
         run: |
-          echo "### ALL APK FILES ###"
-          find . -name "*.apk" 2>/dev/null
-          echo "### OUTPUTS DIR ###"
-          ls -laR ${{ env.PICKED }}/app/build/outputs/ 2>/dev/null | head -60
+          echo "########## REASON ##########"
+          grep -A 18 "What went wrong" /tmp/build.log | head -40
+          echo "########## ERROR LINES ##########"
+          grep -n "error:" /tmp/build.log | head -25
+          echo "########## FAILED TASKS ##########"
+          grep -i "Execution failed for task" /tmp/build.log | head -10
       - name: Collect APK
         run: |
           SDK=$HOME/android-sdk
@@ -53,8 +95,8 @@ jobs:
           U=$(find . -name "*.apk" -not -path "*/intermediates/*" | head -1)
           if [ -z "$U" ]; then echo "NO APK FOUND"; exit 1; fi
           cp "$U" apkout/桌宠小伴.apk
-          $SDK/build-tools/30.0.3/zipalign -f 4 apkout/桌宠小伴.apk apkout/z.apk
-          mv apkout/z.apk apkout/桌宠小伴.apk
+          $SDK/build-tools/30.0.3/zipalign -f 4 apkout/桌宠小伴.apk apkout/z.apk 2>/dev/null || cp "$U" apkout/桌宠小伴.apk
+          mv apkout/z.apk apkout/桌宠小伴.apk 2>/dev/null
           ls -la apkout
       - name: Upload APK
         uses: actions/upload-artifact@v4
