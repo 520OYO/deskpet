@@ -31,29 +31,27 @@ jobs:
           D=$(dirname $(find . -name settings.gradle | head -1))
           echo "PICKED=$D" >> $GITHUB_ENV
           echo "PICKED=$D"
+          ls -la "$D"
       - name: Build unsigned APK
         run: |
-          set +e
           D=${{ env.PICKED }}
           echo "sdk.dir=$HOME/android-sdk" > "$D/local.properties"
           curl -sSL -o g.zip https://services.gradle.org/distributions/gradle-6.7.1-bin.zip
           unzip -q g.zip -d /opt
           chmod +x /opt/gradle-6.7.1/bin/gradle
-          /opt/gradle-6.7.1/bin/gradle -p "$D" clean assembleRelease --stacktrace --no-daemon > /tmp/build.log 2>&1
-          echo "GRADLE_EXIT=$?"
-          echo "### WHAT WENT WRONG ###"
-          grep -A 15 "What went wrong" /tmp/build.log | head -60
-          echo "### ALL APK ###"
+          /opt/gradle-6.7.1/bin/gradle -p "$D" clean assembleRelease --stacktrace --no-daemon 2>&1 | tail -150
+      - name: Show APK results
+        run: |
+          echo "### ALL APK FILES ###"
           find . -name "*.apk" 2>/dev/null
-          echo "### TAIL ###"
-          tail -20 /tmp/build.log
+          echo "### OUTPUTS DIR ###"
+          ls -laR ${{ env.PICKED }}/app/build/outputs/ 2>/dev/null | head -60
       - name: Collect APK
         run: |
           SDK=$HOME/android-sdk
           mkdir -p apkout
           U=$(find . -name "*.apk" -not -path "*/intermediates/*" | head -1)
           if [ -z "$U" ]; then echo "NO APK FOUND"; exit 1; fi
-          echo "FOUND=$U"
           cp "$U" apkout/桌宠小伴.apk
           $SDK/build-tools/30.0.3/zipalign -f 4 apkout/桌宠小伴.apk apkout/z.apk
           mv apkout/z.apk apkout/桌宠小伴.apk
@@ -63,9 +61,3 @@ jobs:
         with:
           name: APK
           path: apkout/*.apk
-      - name: Upload log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: /tmp/build.log
