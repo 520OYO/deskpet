@@ -16,35 +16,22 @@ jobs:
           mkdir -p $SDK/platforms $SDK/build-tools
           curl -sSL -o /tmp/plat.zip https://dl.google.com/android/repository/platform-29_r05.zip
           curl -sSL -o /tmp/bt.zip https://dl.google.com/android/repository/build-tools_r30.0.3-linux.zip
-          curl -sSL -o /tmp/bt2.zip https://dl.google.com/android/repository/build-tools_r30.0.2-linux.zip
-          mkdir -p /tmp/plat /tmp/bt /tmp/bt2
+          mkdir -p /tmp/plat /tmp/bt
           unzip -q /tmp/plat.zip -d /tmp/plat
           unzip -q /tmp/bt.zip -d /tmp/bt
-          unzip -q /tmp/bt2.zip -d /tmp/bt2
           P=$(ls -d /tmp/plat/*/ | head -1)
           B=$(ls -d /tmp/bt/*/ | head -1)
-          B2=$(ls -d /tmp/bt2/*/ | head -1)
-          rm -rf $SDK/platforms/android-29 $SDK/build-tools/30.0.3 $SDK/build-tools/30.0.2
+          rm -rf $SDK/platforms/android-29 $SDK/build-tools/30.0.3
           mv "$P" $SDK/platforms/android-29
           mv "$B" $SDK/build-tools/30.0.3
-          mv "$B2" $SDK/build-tools/30.0.2
-          chmod +x $SDK/build-tools/30.0.3/* $SDK/build-tools/30.0.2/* 2>/dev/null
-      - name: Unzip source and pick project
+          chmod +x $SDK/build-tools/30.0.3/* 2>/dev/null
+      - name: Unzip source
         run: |
           for z in *.zip; do [ -f "$z" ] && unzip -qo "$z"; done
           D=$(dirname $(find . -name settings.gradle | head -1))
           echo "PICKED=$D" >> $GITHUB_ENV
-      - name: Force fresh keystore
-        run: |
-          D=${{ env.PICKED }}
-          rm -f "$D/keystore/deskpet.p12"
-          mkdir -p "$D/keystore"
-          keytool -genkeypair -keystore "$D/keystore/deskpet.jks" -alias deskpetkey \
-            -keyalg RSA -keysize 2048 -validity 10950 \
-            -storepass deskpet2026 -keypass deskpet2026 \
-            -dname "CN=DeskPet,OU=DeskPet,C=CN" -storetype JKS
-          keytool -list -keystore "$D/keystore/deskpet.jks" -storepass deskpet2026
-      - name: Build
+          echo "PICKED=$D"
+      - name: Build unsigned APK
         run: |
           set +e
           D=${{ env.PICKED }}
@@ -54,26 +41,30 @@ jobs:
           chmod +x /opt/gradle-6.7.1/bin/gradle
           /opt/gradle-6.7.1/bin/gradle -p "$D" clean assembleRelease --stacktrace --no-daemon > /tmp/build.log 2>&1
           echo "GRADLE_EXIT=$?"
-          echo "########## WHAT WENT WRONG ##########"
+          echo "### WHAT WENT WRONG ###"
           grep -A 15 "What went wrong" /tmp/build.log | head -60
-          echo "########## ERROR LINES ##########"
-          grep -i "error" /tmp/build.log | head -30
-          echo "########## APK FOUND ##########"
+          echo "### ALL APK ###"
           find . -name "*.apk" 2>/dev/null
-          ls -la "$D/app/build/outputs/apk/release/" 2>/dev/null
-          echo "########## TAIL ##########"
-          tail -25 /tmp/build.log
-      - name: Collect APK
+          echo "### TAIL ###"
+          tail -20 /tmp/build.log
+      - name: Zipalign and collect
         run: |
+          SDK=$HOME/android-sdk
           mkdir -p apkout
-          find . -name "*.apk" -not -path "*/intermediates/*" -exec cp {} apkout/ \;
+          U=$(find . -name "*.apk" -not -path "*/intermediates/*" | head -1)
+          echo "FOUND=$U"
+          cp "$U" apkout/桌宠小伴-未签名.apk
+          $SDK/build-tools/30.0.3/zipalign -f 4 apkout/桌宠小伴-未签名.apk apkout/final.apk
+          mv apkout/final.apk apkout/桌宠小伴-未签名.apk
           ls -la apkout
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: APK
           path: apkout/*.apk
-      - uses: actions/upload-artifact@v4
+      - name: Upload log
         if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: /tmp/build.log
