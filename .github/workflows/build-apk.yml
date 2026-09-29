@@ -47,15 +47,16 @@ jobs:
           find . -name "*.apk" 2>/dev/null
           echo "### TAIL ###"
           tail -20 /tmp/build.log
-      - name: Zipalign and collect
+      - name: Collect APK
         run: |
           SDK=$HOME/android-sdk
           mkdir -p apkout
           U=$(find . -name "*.apk" -not -path "*/intermediates/*" | head -1)
+          if [ -z "$U" ]; then echo "NO APK FOUND"; exit 1; fi
           echo "FOUND=$U"
-          cp "$U" apkout/桌宠小伴-未签名.apk
-          $SDK/build-tools/30.0.3/zipalign -f 4 apkout/桌宠小伴-未签名.apk apkout/final.apk
-          mv apkout/final.apk apkout/桌宠小伴-未签名.apk
+          cp "$U" apkout/桌宠小伴.apk
+          $SDK/build-tools/30.0.3/zipalign -f 4 apkout/桌宠小伴.apk apkout/z.apk
+          mv apkout/z.apk apkout/桌宠小伴.apk
           ls -la apkout
       - name: Upload APK
         uses: actions/upload-artifact@v4
